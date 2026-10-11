@@ -172,28 +172,23 @@ function shotsOf(): ShotStore {
   return mounted;
 }
 
-/**
- * The strip used to need an `upload` prop before an image went anywhere, so a
- * default installation previewed a screenshot and then dropped it.
- */
+/** The strip needs no `upload` prop: an image is held, and the route is where it goes. */
 describe("the default upload", () => {
-  it("puts a capture on the route without the application wiring one", async () => {
+  it("holds a capture for the draft without the application wiring anything", async () => {
     await writing();
     shotsOf().put(taken());
 
-    await vi.waitFor(() => expect(client?.getState().composer.attachments).toHaveLength(1));
-    expect(client?.getState().composer.attachments[0]).toMatchObject({
-      key: "shot-1",
-      source: "capture",
-    });
+    await vi.waitFor(() => expect(client?.getState().composer.held).toBeDefined());
+    expect(client?.getState().composer.held).toMatchObject({ source: "capture" });
+    expect(client?.getState().composer.attachments).toHaveLength(0);
   });
 
   it("marks a pasted one as the reviewer's, not as Maple's own", async () => {
     await writing();
     root().querySelector<HTMLElement>(".mk-composer")!.dispatchEvent(pasted());
 
-    await vi.waitFor(() => expect(client?.getState().composer.attachments).toHaveLength(1));
-    expect(client?.getState().composer.attachments[0]?.source).toBe("offered");
+    await vi.waitFor(() => expect(client?.getState().composer.held).toBeDefined());
+    expect(client?.getState().composer.held?.source).toBe("offered");
   });
 
   it("attempts nothing where the deployment keeps none", async () => {
@@ -201,7 +196,7 @@ describe("the default upload", () => {
     shotsOf().put(taken());
 
     await vi.waitFor(() => expect(strip()?.textContent).toContain("keeps no screenshots"));
-    expect(client?.getState().composer.attachments).toHaveLength(0);
+    expect(client?.getState().composer.held).toBeUndefined();
   });
 
   it("shows a note with a docs link, and no thumbnail or remove button", async () => {
