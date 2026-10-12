@@ -104,6 +104,73 @@ A media connector that cannot answer costs the table its link and nothing more.
 The comment still posts and the fence still carries the `MediaRef`, because
 losing a reviewer's comment over a screenshot is the worse of the two failures.
 
+## Keeping them on GitHub
+
+`githubMedia` stores a screenshot as a GitHub user attachment: the same thing a
+reviewer's paste into a pull-request comment creates. There is no bucket to
+run, and no public URL.
+
+The token is the reviewer's, so the route builds the connector per request
+from their session, the way it builds the store:
+
+```ts
+import { readGitHubSession } from "@maple-kit/core/auth";
+import { githubMedia, githubStore } from "@maple-kit/core/connectors";
+import { createCommentStore } from "@maple-kit/core";
+import { createMapleHandler } from "@maple-kit/core/route";
+
+const secret = process.env.MAPLE_SESSION_SECRET!;
+const repo = { owner: "acme", repo: "app" };
+
+export const handle = createMapleHandler({
+  githubAuth: { clientId: process.env.MAPLE_GITHUB_CLIENT_ID!, secret },
+  media: async (request) => {
+    const session = await readGitHubSession(request, { secret });
+    return session && githubMedia({ ...repo, token: session.token });
+  },
+  store: async (request) => {
+    const session = await readGitHubSession(request, { secret });
+    if (!session) return null;
+    const media = githubMedia({ ...repo, token: session.token });
+    return createCommentStore(githubStore({ ...repo, token: session.token, media }));
+  },
+});
+```
+
+With `githubAuth` set, an upload from a reviewer who is not signed in answers
+`401` ("Sign in to attach a screenshot"), and `/me` reports `media: false` so
+the strip does not offer one. If GitHub refuses the upload, the route answers
+`502` with GitHub's status and message, and `401` with a cleared session when
+the token has expired.
+
+An upload is one `POST` to
+`https://uploads.github.com/user-attachments/assets?content_type=…&name=…&repository_id=…`
+with the bytes as `application/octet-stream`. It answers `201` with
+`{ "url": "https://github.com/user-attachments/assets/<uuid>" }`, and that UUID
+is the `MediaRef.key`. `getUrl` builds the same permanent link without a
+request. The repository id comes from one `GET /repos/{owner}/{repo}`, made
+once per connector.
+
+What a spike against a private repository found:
+
+- **A user token uploads.** The one the reviewer signs in with via Device Flow
+  is a user-to-server token, so it is the right credential, and it is the
+  reviewer's own: the attachment is theirs.
+- **An installation token does not.** The same call with a GitHub Actions
+  installation token answered `404`, and the REST documentation lists no such
+  endpoint. A route that holds only an installation token cannot use this
+  connector; it needs the reviewer's token, through a `media` resolver.
+- **The link is private to the repository.** An anonymous request gets `404`.
+  A signed-in viewer who can read the repository is redirected to a short-lived
+  signed copy, and a comment that embeds the link renders it for them. That is
+  what the pull request's Shot column needs, and it is why this connector is
+  safe to give `githubStore`: unlike a presigned URL, the link does not expire.
+- **There is no `remove`.** GitHub offers no call to delete an attachment, and
+  the contract says to omit a method a backend cannot honour. A discarded draft
+  uploads nothing, so only a published comment leaves an attachment behind.
+- **Limits are GitHub's.** Its size and type limits for images apply, and a
+  refusal reaches the reviewer as a failed upload.
+
 ## When there is no screenshot
 
 There are three ways not to have one, they are not the same thing, and all
